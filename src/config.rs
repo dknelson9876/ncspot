@@ -103,6 +103,7 @@ pub struct ConfigValues {
     pub hide_display_names: Option<bool>,
     pub credentials: Option<Credentials>,
     pub ap_port: Option<u16>,
+    pub autoplay: Option<bool>,
 }
 
 /// Commands used to obtain user credentials automatically.

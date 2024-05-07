@@ -6,11 +6,13 @@ use log::{debug, info};
 use notify_rust::Notification;
 
 use rand::prelude::*;
+use rspotify::model::Id;
 use strum_macros::Display;
 
 use crate::config::{Config, PlaybackState};
 use crate::library::Library;
 use crate::model::playable::Playable;
+use crate::model::track::Track;
 use crate::spotify::PlayerEvent;
 use crate::spotify::Spotify;
 
@@ -367,7 +369,6 @@ impl Queue {
     /// used, and the next track will actually be played. This should be used
     /// when going to the next entry in the queue is the wanted behavior.
     pub fn next(&self, manual: bool) {
-        let q = self.queue.read().unwrap();
         let current = *self.current_track.read().unwrap();
         let repeat = self.cfg.state().repeat;
 
@@ -380,13 +381,54 @@ impl Queue {
             if repeat == RepeatSetting::RepeatTrack && manual {
                 self.set_repeat(RepeatSetting::RepeatPlaylist);
             }
-        } else if repeat == RepeatSetting::RepeatPlaylist && q.len() > 0 {
+        } else if repeat == RepeatSetting::RepeatPlaylist && self.len() > 0 {
             let random_order = self.random_order.read().unwrap();
             self.play(
                 random_order.as_ref().map(|o| o[0]).unwrap_or(0),
                 false,
                 false,
             );
+        } else if self.cfg.values().autoplay.unwrap_or(false) {
+            debug!("Looking up similar tracks");
+            if let Some(current_track) = self.get_current() {
+                if let Some(id) = current_track.id() {
+                    let recommendations: Vec<Track> = self
+                        .spotify
+                        .api
+                        .recommendations(None, None, Some(vec![&id]))
+                        .map(|r| r.tracks)
+                        .map(|tracks| {
+                            tracks
+                                .iter()
+                                .filter_map(|track| match track.id.as_ref() {
+                                    Some(id) => {
+                                        debug!("Transforming track {:?}", id);
+                                        Some(Track::from(&self.spotify.api.track(id.id()).unwrap()))
+                                    }
+                                    None => None,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or(Vec::new());
+
+                    let tracks: Vec<Playable> = recommendations
+                        .iter()
+                        .map(|track| Playable::Track(track.clone()))
+                        .collect();
+
+                    debug!("appending new tracks...");
+                    self.append_next(&tracks);
+                    debug!("finished appending new tracks...");
+                }
+            }
+            
+            if let Some(index) = self.next_index() {
+                debug!("playing new tracks...");
+                self.play(index, false, false);
+            } else {
+                debug!("failed to get next index of new tracks...");
+                self.spotify.stop();
+            }
         } else {
             self.spotify.stop();
         }
